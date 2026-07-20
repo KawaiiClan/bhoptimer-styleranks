@@ -207,7 +207,7 @@ public void OnPluginStart()
 	gCV_UseOthers = new Convar("shavit_checkpoints_useothers", "1", "Allow players to use or duplicate another player's checkpoints.", 0, true, 0.0, true, 1.0);
 	gCV_RestoreStates = new Convar("shavit_checkpoints_restorestates", "1", "Save the players' timer/position etc.. when they die/change teams,\nand load the data when they spawn?\n0 - Disabled\n1 - Enabled", 0, true, 0.0, true, 1.0);
 	gCV_MaxCP = new Convar("shavit_checkpoints_maxcp", "1000", "Maximum amount of checkpoints.\nNote: Very high values will result in high memory usage!", 0, true, 1.0, true, 10000.0);
-	gCV_MaxCP_Segmented = new Convar("shavit_checkpoints_maxcp_seg", "10", "Maximum amount of segmented checkpoints. Make this less or equal to shavit_checkpoints_maxcp.\nNote: Very high values will result in HUGE memory usage! Segmented checkpoints contain frame data!", 0, true, 1.0, true, 50.0);
+	gCV_MaxCP_Segmented = new Convar("shavit_checkpoints_maxcp_seg", "10", "Maximum amount of segmented checkpoints. Make this less or equal to shavit_checkpoints_maxcp.\nNote: Very high values will result in HUGE memory usage! Segmented checkpoints contain frame data!", 0, true, 1.0, true, 10000.0);
 	gCV_PersistData = new Convar("shavit_checkpoints_persistdata", "600", "How long to persist timer data for disconnected users in seconds?\n-1 - Until map change\n0 - Disabled", 0, true, -1.0);
 
 	Convar.AutoExecConfig();
@@ -371,7 +371,7 @@ public void Shavit_OnResume(int client, int track)
 {
 	if (gB_SaveStates[client])
 	{
-		// events&outputs won't work properly unless we do this next frame...
+		// events&outputs won't work properly unless we do this next-frame / end-of-current-frame...
 		RequestFrame(LoadPersistentData, GetClientSerial(client));
 	}
 }
@@ -530,6 +530,7 @@ public void OnClientDisconnect(int client)
 	}
 
 	gI_UsingCheckpointsOwner[client] = 0;
+	gB_InCheckpointMenu[client] = false;
 
 	PersistData(client, true);
 
@@ -626,7 +627,7 @@ public void Player_Spawn(Event event, const char[] name, bool dontBroadcast)
 	{
 		if(gCV_RestoreStates.BoolValue)
 		{
-			// events&outputs won't work properly unless we do this next frame...
+			// events&outputs won't work properly unless we do this next-frame / end-of-current-frame...
 			RequestFrame(LoadPersistentData, serial);
 		}
 	}
@@ -638,7 +639,7 @@ public void Player_Spawn(Event event, const char[] name, bool dontBroadcast)
 		if (iIndex != -1)
 		{
 			gB_SaveStates[client] = true;
-			// events&outputs won't work properly unless we do this next frame...
+			// events&outputs won't work properly unless we do this next-frame / end-of-current-frame...
 			RequestFrame(LoadPersistentData, serial);
 		}
 	}
@@ -1655,7 +1656,7 @@ void SaveCheckpointCache(int saver, int target, cp_cache_t cpcache, int index, H
 
 	if(IsFakeClient(target))
 	{
-		// unfortunately replay bots don't have a snapshot, so we can generate a fake one
+		// unfortunately replay bots don't have a snapshot, so we generate a fake one
 		snapshot.bTimerEnabled = true;
 		snapshot.fCurrentTime = Shavit_GetReplayTime(target);
 		snapshot.bClientPaused = false;
@@ -1716,11 +1717,17 @@ void SaveCheckpointCache(int saver, int target, cp_cache_t cpcache, int index, H
 				delete ep.playerEvents;
 				cpcache.aOutputWaits = view_as<ArrayList>(CloneHandle(ep.outputWaits, plugin));
 				delete ep.outputWaits;
+				for (int N = 0; N < 4; N++)
+				{
+					cpcache.aOnUser1_4[N] = view_as<ArrayList>(CloneHandle(ep.OnUser1_4[N], plugin));
+					delete ep.OnUser1_4[N];
+				}
 			}
 			else
 			{
 				cpcache.aEvents = ep.playerEvents;
 				cpcache.aOutputWaits = ep.outputWaits;
+				cpcache.aOnUser1_4 = ep.OnUser1_4;
 			}
 		}
 	}
@@ -1902,8 +1909,11 @@ bool LoadCheckpointCache(int client, cp_cache_t cpcache, int index, bool force =
 	{
 		cpcache.aSnapshot.bPracticeMode = true;
 
-		// Do this here to trigger practice mode alert
-		Shavit_SetPracticeMode(client, true, true);
+		// Do this here to only trigger a practice mode alert if the client was <=1s into a run (prevent alert spam in some cases)
+		if (cpcache.aSnapshot.iFullTicks > 100)
+		{
+			Shavit_SetPracticeMode(client, true, true);
+		}
 	}
 
 	Shavit_LoadSnapshot(client, cpcache.aSnapshot, sizeof(timer_snapshot_t), force);
@@ -1941,6 +1951,7 @@ bool LoadCheckpointCache(int client, cp_cache_t cpcache, int index, bool force =
 		eventpack_t ep;
 		ep.playerEvents = cpcache.aEvents;
 		ep.outputWaits = cpcache.aOutputWaits;
+		ep.OnUser1_4 = cpcache.aOnUser1_4;
 		SetClientEvents(client, ep);
 
 #if DEBUG

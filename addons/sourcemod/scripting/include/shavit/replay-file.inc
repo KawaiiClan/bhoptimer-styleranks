@@ -34,10 +34,13 @@
 // 0x07: fixed iFrameCount because postframes were included in the value when they shouldn't be
 // 0x08: added zone-offsets to header
 // 0x09: bumped with no actual file changes because time calculation in regards to offsets have been changed/fixed since it seems to have been using the end-zone-offset incorrectly (and should now be fine hopefully since 2021-12-21 / a146b51fb16febf1847657fba7ef9e0c056d7476)
+// 0x0a: Replay-frame saving was originally in `OnPlayerRunCmd()` (`Shavit_OnUserCmdPre`).  It was moved to `OnPlayerRunCmdPost()` so we could capture `buttons`/`vel` after every plugin had modified them (55b6253b30e1f0152e7c79077f03a7684fd774f7 / after 0x08 but before 0x09 / v3.1.0).  This was a mistake because grabbing `flags` in `OnPlayerRunCmdPost()` is busted and fucked and shit.  So this version defucks that.  Replay-file format is unchanged, but .pos, .flags, and .mt are grabbed in `OnPlayerRunCmdPre()` and the rest of the values are grabbed in `OnPlayerRunCmdPost()`.
+// 0x0b: Well, 0x0a causes problems with timescaled/tas replay playback & JHUD calculation, so just reverting 0x0a until there's a better plan for everything.  Replay-file format is unchanged.
+// 0x0c: timestamp added
 
 #define REPLAY_FORMAT_V2 "{SHAVITREPLAYFORMAT}{V2}"
 #define REPLAY_FORMAT_FINAL "{SHAVITREPLAYFORMAT}{FINAL}"
-#define REPLAY_FORMAT_SUBVERSION 0x09
+#define REPLAY_FORMAT_SUBVERSION 0x0c
 
 #define REPLAY_FRAMES_PER_WRITE 100 // amounts of frames to write per read/write call
 
@@ -55,6 +58,7 @@ enum struct replay_header_t
 	int iPostFrames;
 	float fTickrate;
 	float fZoneOffset[2];
+	int iTimestamp;
 }
 
 enum struct frame_t
@@ -120,27 +124,23 @@ stock bool LoadReplayCache(frame_cache_t cache, int style, int track, const char
 stock bool ReadReplayFrames(File file, replay_header_t header, frame_cache_t cache)
 {
 	int total_cells = 6;
-	int used_cells = 6;
 	bool is_btimes = false;
 
 	if (header.iReplayVersion > 0x01)
 	{
 		total_cells = 8;
-		used_cells = 8;
 	}
 
-	// We have differing total_cells & used_cells because we want to save memory during playback since the latest two cells added (vel & mousexy) aren't needed and are only useful for replay file anticheat usage stuff....
 	if (header.iReplayVersion >= 0x06)
 	{
 		total_cells = 10;
-		used_cells = 8;
 	}
 
 	any aReplayData[sizeof(frame_t)];
 
 	delete cache.aFrames;
 	int iTotalSize = header.iFrameCount + header.iPreFrames + header.iPostFrames;
-	cache.aFrames = new ArrayList(used_cells, iTotalSize);
+	cache.aFrames = new ArrayList(total_cells, iTotalSize);
 
 	if (!header.sReplayFormat[0]) // old replay format. no header.
 	{
@@ -154,8 +154,8 @@ stock bool ReadReplayFrames(File file, replay_header_t header, frame_cache_t cac
 
 		while (!file.EndOfFile())
 		{
-			file.ReadLine(sLine, 320);
-			int iStrings = ExplodeString(sLine, "|", sExplodedLine, 6, 64);
+			file.ReadLine(sLine, sizeof(sLine));
+			int iStrings = ExplodeString(sLine, "|", sExplodedLine, sizeof(sExplodedLine), sizeof(sExplodedLine[]));
 
 			aReplayData[0] = StringToFloat(sExplodedLine[0]);
 			aReplayData[1] = StringToFloat(sExplodedLine[1]);
@@ -177,7 +177,7 @@ stock bool ReadReplayFrames(File file, replay_header_t header, frame_cache_t cac
 		{
 			if(file.Read(aReplayData, total_cells, 4) >= 0)
 			{
-				cache.aFrames.SetArray(i, aReplayData, used_cells);
+				cache.aFrames.SetArray(i, aReplayData);
 
 				if (is_btimes && (aReplayData[5] & IN_BULLRUSH))
 				{
@@ -234,7 +234,7 @@ stock File ReadReplayHeader(const char[] path, replay_header_t header, int style
 
 	char sHeader[64];
 
-	if(!file.ReadLine(sHeader, 64))
+	if(!file.ReadLine(sHeader, sizeof(sHeader)))
 	{
 		delete file;
 		return null;
@@ -242,7 +242,7 @@ stock File ReadReplayHeader(const char[] path, replay_header_t header, int style
 
 	TrimString(sHeader);
 	char sExplodedHeader[2][64];
-	ExplodeString(sHeader, ":", sExplodedHeader, 2, 64);
+	ExplodeString(sHeader, ":", sExplodedHeader, sizeof(sExplodedHeader), sizeof(sExplodedHeader[]));
 
 	strcopy(header.sReplayFormat, sizeof(header.sReplayFormat), sExplodedHeader[1]);
 
@@ -283,9 +283,9 @@ stock File ReadReplayHeader(const char[] path, replay_header_t header, int style
 		else
 		{
 			char sAuthID[32];
-			file.ReadString(sAuthID, 32);
-			ReplaceString(sAuthID, 32, "[U:1:", "");
-			ReplaceString(sAuthID, 32, "]", "");
+			file.ReadString(sAuthID, sizeof(sAuthID));
+			ReplaceString(sAuthID, sizeof(sAuthID), "[U:1:", "");
+			ReplaceString(sAuthID, sizeof(sAuthID), "]", "");
 			header.iSteamID = StringToInt(sAuthID);
 		}
 
@@ -304,6 +304,11 @@ stock File ReadReplayHeader(const char[] path, replay_header_t header, int style
 		{
 			file.ReadInt32(view_as<int>(header.fZoneOffset[0]));
 			file.ReadInt32(view_as<int>(header.fZoneOffset[1]));
+		}
+
+		if (version >= 0x0c)
+		{
+			file.ReadInt32(view_as<int>(header.iTimestamp));
 		}
 	}
 	else if(StrEqual(header.sReplayFormat, REPLAY_FORMAT_V2))
@@ -345,7 +350,7 @@ stock File ReadReplayHeader(const char[] path, replay_header_t header, int style
 	return file;
 }
 
-stock void WriteReplayHeader(File fFile, int style, int track, float time, int steamid, int preframes, int postframes, float fZoneOffset[2], int iSize, float tickrate, const char[] sMap)
+stock void WriteReplayHeader(File fFile, int style, int track, float time, int steamid, int preframes, int postframes, float fZoneOffset[2], int iSize, float tickrate, const char[] sMap, int timestamp)
 {
 	fFile.WriteLine("%d:" ... REPLAY_FORMAT_FINAL, REPLAY_FORMAT_SUBVERSION);
 
@@ -363,6 +368,8 @@ stock void WriteReplayHeader(File fFile, int style, int track, float time, int s
 
 	fFile.WriteInt32(view_as<int>(fZoneOffset[0]));
 	fFile.WriteInt32(view_as<int>(fZoneOffset[1]));
+
+	fFile.WriteInt32(timestamp);
 }
 
 stock void cell2buf(char[] buf, int& pos, int cell)
@@ -373,7 +380,7 @@ stock void cell2buf(char[] buf, int& pos, int cell)
 	buf[pos++] = (cell >> 24) & 0xFF;
 }
 
-stock int WriteReplayHeaderToBuffer(char[] buf, int style, int track, float time, int steamid, int preframes, int postframes, float fZoneOffset[2], int totalframes, float tickrate, const char[] sMap)
+stock int WriteReplayHeaderToBuffer(char[] buf, int style, int track, float time, int steamid, int preframes, int postframes, float fZoneOffset[2], int totalframes, float tickrate, const char[] sMap, int timestamp)
 {
 	int pos = FormatEx(buf, 512, "%d:%s\n%s", REPLAY_FORMAT_SUBVERSION, REPLAY_FORMAT_FINAL, sMap);
 	pos += 1; // skip past NUL
@@ -391,12 +398,12 @@ stock int WriteReplayHeaderToBuffer(char[] buf, int style, int track, float time
 	cell2buf(buf, pos, view_as<int>(fZoneOffset[0]));
 	cell2buf(buf, pos, view_as<int>(fZoneOffset[1]));
 
+	cell2buf(buf, pos, timestamp);
+
 	return pos;
 }
 
-// file_a is usually used as the wr replay file.
-// file_b is usually used as the duplicate/backup replay file.
-stock void WriteReplayFrames(ArrayList playerrecording, int iSize, File file_a, File file_b)
+stock void WriteReplayFrames(ArrayList playerrecording, int iSize, File replayfile)
 {
 	any aFrameData[sizeof(frame_t)];
 	any aWriteData[sizeof(frame_t) * REPLAY_FRAMES_PER_WRITE];
@@ -413,16 +420,7 @@ stock void WriteReplayFrames(ArrayList playerrecording, int iSize, File file_a, 
 
 		if(++iFramesWritten == REPLAY_FRAMES_PER_WRITE || i == iSize - 1)
 		{
-			if (file_a)
-			{
-				file_a.Write(aWriteData, sizeof(frame_t) * iFramesWritten, 4);
-			}
-
-			if (file_b)
-			{
-				file_b.Write(aWriteData, sizeof(frame_t) * iFramesWritten, 4);
-			}
-
+			replayfile.Write(aWriteData, sizeof(frame_t) * iFramesWritten, 4);
 			iFramesWritten = 0;
 		}
 	}

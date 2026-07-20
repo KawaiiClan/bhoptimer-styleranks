@@ -24,7 +24,10 @@
 #endif
 #define _shavit_core_included
 
-#define SHAVIT_VERSION "3.5.2a"
+#define SHAVIT_VERSION_MAJOR 4
+#define SHAVIT_VERSION_MINOR 0
+#define SHAVIT_VERSION_PATCH 2
+#define SHAVIT_VERSION "4.0.2a"
 #define STYLE_LIMIT 256
 
 // god i fucking hate sourcemod. NULL_VECTOR isn't const so it's not guaranteed to be 0,0,0
@@ -158,7 +161,8 @@ enum struct timer_snapshot_t
 	float fLastAngle;
 
 	// Internal int used for the iMeasuredJumps & iPerfectJumps stuff.
-	int iLandingTick;
+	// How many ticks the player has been on the ground since landing. 0 = in air.
+	int iGroundTicks;
 	// Internal value used for unfucking style/zone gravity when using ladders.
 	MoveType iLastMoveType;
 	// Internal value used for blocking +strafe (if block_pstrafe is enabled).
@@ -575,8 +579,6 @@ forward void Shavit_OnTimeIncrement(int client, timer_snapshot_t snapshot, float
 
 /**
  * Called just before shavit-core adds time to a player's timer.
- * This is the forward you should use to modify the player's timer smoothly.
- * A good example use case is timescaling.
  *
  * @param client					Client index.
  * @param snapshot					A snapshot with the player's current timer. Read above in shavit.inc for more information.

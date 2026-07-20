@@ -115,7 +115,6 @@ bool gB_Protobuf = false;
 bool gB_NewMessage[MAXPLAYERS+1];
 StringMap gSM_Messages = null;
 
-//style ranks
 int gI_Styles = 0;
 
 char gS_ControlCharacters[][] = {"\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07", "\x08", "\x09",
@@ -223,12 +222,9 @@ public void Shavit_OnStyleConfigLoaded(int styles)
 {
 	gI_Styles = styles;
 
-	for (int i = 0; i < STYLE_LIMIT; i++)
+	for (int i = 0; i < styles; i++)
 	{
-		if (i < styles)
-		{
-			Shavit_GetStyleStringsStruct(i, gS_StyleStrings[i]);
-		}
+		Shavit_GetStyleStringsStruct(i, gS_StyleStrings[i]);
 	}
 }
 
@@ -1342,21 +1338,20 @@ void FormatChat(int client, char[] buffer, int size)
 		for (int i = 0; i < gI_Styles; i++)
 		{
 			iStyleRank = Shavit_GetStyleRank(client, i);
-			if(iStyleRank == 0)
+			if (iStyleRank == 0)
 			{
-				strcopy(sStyleRank, 16, "Unranked");
+				strcopy(sStyleRank, sizeof(sStyleRank), "Unranked");
 			}
 			else
 			{
-				IntToString(iStyleRank, sStyleRank, 16);
-				Format(sStyleRank, 16, "#%s", sStyleRank);
+				FormatEx(sStyleRank, sizeof(sStyleRank), "#%d", iStyleRank);
 			}
-			FormatEx(sStyleBuf, 32, "{style%drank}", i);
+			FormatEx(sStyleBuf, sizeof(sStyleBuf), "{style%drank}", i);
 			ReplaceString(buffer, size, sStyleBuf, sStyleRank);
 
-			if(i == Shavit_GetBhopStyle(client))
+			if (i == Shavit_GetBhopStyle(client))
 			{
-				FormatEx(sStyleBuf, 32, "%s %s", sStyleRank, gS_StyleStrings[i].sStyleName);
+				FormatEx(sStyleBuf, sizeof(sStyleBuf), "%s %s", sStyleRank, gS_StyleStrings[i].sStyleName);
 				ReplaceString(buffer, size, "{currentstylerank}", sStyleBuf);
 			}
 		}
@@ -1502,24 +1497,25 @@ public void SQL_GetChat_Callback(Database db, DBResultSet results, const char[] 
 	}
 }
 
-void RemoveFromString(char[] buf, char[] thing, int extra)
+void RemoveFromString(char[] buf, const char[] prefix, int extra_len)
 {
-	int index, len = strlen(buf);
-	extra += strlen(thing);
+	int index;
+	extra_len += strlen(prefix);
 
-	while ((index = StrContains(buf, thing, true)) != -1)
+	while ((index = StrContains(buf, prefix, true)) != -1)
 	{
-		// Search sequence is in the end of the string, so just cut it and exit
-		if(index + extra >= len)
+		int remaining = strlen(buf[index]);
+
+		if (remaining > extra_len)
+		{
+			for (int i = 0; i < remaining-extra_len+1; ++i)
+			{
+				buf[index+i] = buf[index+i+extra_len];
+			}
+		}
+		else
 		{
 			buf[index] = '\0';
-			break;
-		}
-
-		while (buf[index] != 0)
-		{
-			buf[index] = buf[index+extra];
-			++index;
 		}
 	}
 }
@@ -1606,21 +1602,20 @@ public int Native_GetPlainChatrank(Handle handler, int numParams)
 		for (int i = 0; i < gI_Styles; i++)
 		{
 			iStyleRank = Shavit_GetStyleRank(client, i);
-			if(iStyleRank == 0)
+			if (iStyleRank == 0)
 			{
-				strcopy(sStyleRank, 16, "Unranked");
+				strcopy(sStyleRank, sizeof(sStyleRank), "Unranked");
 			}
 			else
 			{
-				IntToString(iStyleRank, sStyleRank, 16);
-				Format(sStyleRank, 16, "#%s", sStyleRank);
+				FormatEx(sStyleRank, sizeof(sStyleRank), "#%d", iStyleRank);
 			}
-			FormatEx(sStyleBuf, 32, "{style%drank}", i);
+			FormatEx(sStyleBuf, sizeof(sStyleBuf), "{style%drank}", i);
 			ReplaceString(buf, sizeof(buf), sStyleBuf, sStyleRank);
 
-			if(i == Shavit_GetBhopStyle(client))
+			if (i == Shavit_GetBhopStyle(client))
 			{
-				FormatEx(sStyleBuf, 32, "%s %s", sStyleRank, gS_StyleStrings[i].sStyleName);
+				FormatEx(sStyleBuf, sizeof(sStyleBuf), "%s %s", sStyleRank, gS_StyleStrings[i].sStyleName);
 				ReplaceString(buf, sizeof(buf), "{currentstylerank}", sStyleBuf);
 			}
 		}
